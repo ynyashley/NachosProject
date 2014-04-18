@@ -202,6 +202,11 @@ public class KThread {
 		toBeDestroyed = currentThread;
 
 		currentThread.status = statusFinished;
+		
+		if(waitingThread != null) {
+			waitingThread.ready();
+			waitingThread = null;
+		}
 
 		sleep();
 	}
@@ -285,6 +290,11 @@ public class KThread {
 
 		Lib.assertTrue(this != currentThread);
 
+		waitingThread = currentThread;
+		
+		Machine.interrupt().disable();
+		
+		sleep();
 	}
 
 	/**
@@ -398,7 +408,7 @@ public class KThread {
 
 		public void run() {
 			for (int i = 0; i < 5; i++) {
-				System.out.println("*** awesome thread " + which + " looped " + i
+				System.out.println("*** thread " + which + " looped " + i
 						+ " times");
 				currentThread.yield();
 			}
@@ -459,6 +469,8 @@ public class KThread {
 	private static int numCreated = 0;
 
 	private static ThreadQueue readyQueue = null;
+	
+	private static KThread waitingThread = null;
 
 	private static KThread currentThread = null;
 

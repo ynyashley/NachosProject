@@ -27,6 +27,10 @@ public class UserProcess {
 		pageTable = new TranslationEntry[numPhysPages];
 		for (int i = 0; i < numPhysPages; i++)
 			pageTable[i] = new TranslationEntry(i, i, true, false, false, false);
+		fileDescriptor = new OpenFile[16];
+		// initialize FD 0,1 with stdin and stdout
+		fileDescriptor[0] = UserKernel.console.openForReading();
+		fileDescriptor[1] = UserKernel.console.openForWriting();
 	}
 
 	/**
@@ -331,6 +335,15 @@ public class UserProcess {
 		processor.writeRegister(Processor.regA0, argc);
 		processor.writeRegister(Processor.regA1, argv);
 	}
+	
+	private int nextAvailFD() {
+		for(int i = 0; i < fileDescriptor.length; i++) {
+			if(fileDescriptor[i] == null) {
+				return i;
+			}
+		}
+		return -1;
+	}
 
 	/**
 	 * Handle the halt() system call.
@@ -340,6 +353,145 @@ public class UserProcess {
 		Machine.halt();
 
 		Lib.assertNotReached("Machine.halt() did not halt machine!");
+		return 0;
+	}
+	
+	/**
+	 * Attempt to open the named file and return a file descriptor.
+	 *
+	 * Note that open() can only be used to open files on disk; open() will never
+	 * return a file descriptor referring to a stream.
+	 *
+	 * Returns the new file descriptor, or -1 if an error occurred.
+	 */
+	private int handleOpen(int fileName) {
+		OpenFile open;
+		open = UserKernel.fileSystem.open(readVirtualMemoryString(fileName, 256), false);
+		if(open == null) { // file does not exist
+			return -1;
+		}
+		else {
+			// get the next available FD index
+			int availableFD = nextAvailFD();
+			// check to see if the # of currently opened files > 16
+			if(availableFD == -1) {
+				return -1;
+			}
+			// make FD point to the newly opened file
+			fileDescriptor[availableFD] = open;
+			return availableFD;
+		}
+	}
+	
+	private int handleClose(int fdIndex) {
+		// close this file and release any associated system resources
+		fileDescriptor[fdIndex].close();
+		fileDescriptor[fdIndex] = null;
+		return 0;
+	}
+	
+	private int handleCreate(int fileName) {
+		OpenFile create;
+		create = UserKernel.fileSystem.open(readVirtualMemoryString(fileName, 256), true);
+		if(create == null) {
+			return -1;
+		}
+		// get the next available FD index
+		int availableFD = nextAvailFD();
+		// check to see if the # of currently opened files > 16
+		if(availableFD == -1) {
+			return -1;
+		}
+		// make FD point to the newly created file
+		fileDescriptor[availableFD] = create;
+		return availableFD;
+	}
+	
+	private int handleRead(int fdIndex, int buffer, int count) {
+		int bufsize = 1024;
+		int bytesWritten = 0;
+		int bytesLeft = count;
+		int successfulWrite = 0;
+		OpenFile fileToBeRead = fileDescriptor[fdIndex];
+		byte[] buf = new byte[bufsize];
+		while(bytesLeft > 0) {
+			if(bytesLeft >= bufsize) {
+				if(fileToBeRead.read(buf, bytesWritten, bufsize) == -1)
+					return -1;
+				successfulWrite += writeVirtualMemory(buffer, buf, bytesWritten, bufsize);
+				bytesLeft -= bufsize;
+				bytesWritten += bufsize;
+			}
+			else {
+				if(fileToBeRead.read(buf, bytesWritten, bytesLeft) == -1) 
+					return -1;
+				successfulWrite += writeVirtualMemory(buffer, buf, bytesWritten, bufsize);
+				bytesLeft = 0;
+				bytesWritten += bytesLeft;
+			}	
+		}
+		return successfulWrite;
+	}
+	
+	private int handleWrite(int fdIndex, int buffer, int count) {
+		int bufsize = 1024;
+		int bytesWritten = 0;
+		int bytesLeft = count;
+		int successfulWrite = 0;
+		
+		int transferred, written;
+		
+		OpenFile fileToBeWritten = fileDescriptor[fdIndex];
+		byte[] buf = new byte[1024];
+		while(bytesLeft > 0)
+		{	
+		   if (bytesLeft >bufsize)
+			   {
+			     transferred = readVirtualMemory(buffer, buf, bytesWritten, bufsize);
+		         written = fileToBeWritten.write(buf, bytesWritten, bufsize);
+		         if (transferred != written)
+		        	 return -1;
+		         else
+		         {
+		        	 bytesLeft -= bufsize;
+		        	 bytesWritten += bufsize; 
+		        	 successfulWrite += written;
+		         }
+			   }
+		   else
+		   {
+			   transferred = readVirtualMemory(buffer, buf, bytesWritten, bytesLeft);
+			   written = fileToBeWritten.write(buf, bytesWritten, bytesLeft);
+			   if (transferred != written)
+			   {
+				   return -1;
+			   }
+			   else
+			   {
+		          bytesLeft = 0;
+		          bytesWritten +=  bytesLeft;
+		          successfulWrite += written;
+			   }
+		   }
+		}
+			return successfulWrite;
+		
+	}
+	
+	private int handleUnlink(int fileName) {
+		String file = readVirtualMemoryString(fileName, 256);
+		boolean open = false;
+		for(OpenFile o : fileDescriptor) {
+			if(o.getName().equals(file)) {
+				open = true;
+			}
+		}
+		if(!open) {
+			UserKernel.fileSystem.remove(file);
+		}
+		else {
+			
+		}
 		return 0;
 	}
 
@@ -413,7 +565,18 @@ public class UserProcess {
 		switch (syscall) {
 		case syscallHalt:
 			return handleHalt();
-
+		case syscallCreate:
+			return handleCreate(a0);
+		case syscallOpen:
+			return handleOpen(a0);
+		case syscallRead:
+			return handleRead(a0, a1, a2);
+		case syscallWrite:
+			return handleWrite(a0, a1, a2);
+		case syscallClose:
+			return handleClose(a0);
+		case syscallUnlink:
+			return handleUnlink(a0);
 		default:
 			Lib.debug(dbgProcess, "Unknown syscall " + syscall);
 			Lib.assertNotReached("Unknown system call!");
@@ -460,6 +623,8 @@ public class UserProcess {
 
 	/** The number of pages in the program's stack. */
 	protected final int stackPages = 8;
+	
+	protected OpenFile[] fileDescriptor;
 
 	private int initialPC, initialSP;
 

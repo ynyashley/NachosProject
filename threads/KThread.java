@@ -1,6 +1,7 @@
 package nachos.threads;
 
 import nachos.machine.*;
+import java.util.*;
 
 /**
  * A KThread is a thread that can be used to execute Nachos kernel code. Nachos
@@ -54,6 +55,7 @@ public class KThread {
 	 * create an idle thread as well.
 	 */
 	public KThread() {
+		waitQueue = new ArrayList<KThread>();
 		if (currentThread != null) {
 			tcb = new TCB();
 		}
@@ -203,10 +205,8 @@ public class KThread {
 
 		currentThread.status = statusFinished;
 		
-		if(waitingThread != null) {
-			waitingThread.ready();
-			waitingThread = null;
-		}
+		while(!waitQueue.isEmpty())
+			waitQueue.remove(0).ready();
 
 		sleep();
 	}
@@ -289,12 +289,17 @@ public class KThread {
 		Lib.debug(dbgThread, "Joining to thread: " + toString());
 
 		Lib.assertTrue(this != currentThread);
-
-		waitingThread = currentThread;
 		
-		Machine.interrupt().disable();
-		
-		sleep();
+		// should not need to sleep a thread that is already finished
+		if(this.status != statusFinished) {
+			Machine.interrupt().disable();
+			// wait until the main thread is done before killing "this" thread
+			waitQueue.add(currentThread);
+			sleep();
+			Machine.interrupt().enable();
+		}
+		else
+			return;
 	}
 
 	/**
@@ -423,7 +428,9 @@ public class KThread {
 	public static void selfTest() {
 		Lib.debug(dbgThread, "Enter KThread.selfTest");
 
-		new KThread(new PingTest(1)).setName("forked thread").fork();
+		KThread t1 = new KThread(new PingTest(1)).setName("forked thread");
+		t1.fork();
+		//t1.join();
 		new PingTest(0).run();
 	}
 
@@ -469,12 +476,12 @@ public class KThread {
 	private static int numCreated = 0;
 
 	private static ThreadQueue readyQueue = null;
-	
-	private static KThread waitingThread = null;
 
 	private static KThread currentThread = null;
 
 	private static KThread toBeDestroyed = null;
 
 	private static KThread idleThread = null;
+	
+	private static ArrayList<KThread> waitQueue = null;
 }

@@ -385,6 +385,8 @@ public class UserProcess {
 	
 	private int handleClose(int fdIndex) {
 		// close this file and release any associated system resources
+		if(fdIndex < 0 || fdIndex > 15)
+			return -1;
 		fileDescriptor[fdIndex].close();
 		fileDescriptor[fdIndex] = null;
 		return 0;
@@ -408,6 +410,9 @@ public class UserProcess {
 	}
 	
 	private int handleRead(int fdIndex, int buffer, int count) {
+		if(fdIndex < 0 || fdIndex > 15 || count <= 0) {
+			return -1;
+		}
 		int bufsize = 1024;
 		int bytesWritten = 0;
 		int bytesLeft = count;
@@ -434,6 +439,9 @@ public class UserProcess {
 	}
 	
 	private int handleWrite(int fdIndex, int buffer, int count) {
+		if(fdIndex < 0 || fdIndex > 15 || count <= 0) {
+			return -1;
+		}
 		int bufsize = 1024;
 		int bytesWritten = 0;
 		int bytesLeft = count;
@@ -480,19 +488,11 @@ public class UserProcess {
 	
 	private int handleUnlink(int fileName) {
 		String file = readVirtualMemoryString(fileName, 256);
-		boolean open = false;
-		for(OpenFile o : fileDescriptor) {
-			if(o.getName().equals(file)) {
-				open = true;
-			}
-		}
-		if(!open) {
-			UserKernel.fileSystem.remove(file);
-		}
-		else {
-			
-		}
-		return 0;
+		boolean success;
+		success = UserKernel.fileSystem.remove(file);
+		if(success)
+			return 0;
+		return -1;
 	}
 
 	private static final int syscallHalt = 0, syscallExit = 1, syscallExec = 2,

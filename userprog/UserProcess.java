@@ -344,6 +344,24 @@ public class UserProcess {
 		}
 		return -1;
 	}
+	
+	private boolean checkFDIndex(int fdIndex) {
+		if(fdIndex < 0 || fdIndex > 15)
+			return false;
+		return true;
+	}
+	
+	private boolean checkFileName(int fileNameAddr) {
+		// TODO: Check fileNameAddr on page table
+		return true;
+	}
+	
+	private boolean checkThreeArgs(int fdIndex, int buffer, int count) {
+		// TODO: Check buffer on page table
+		if(!checkFDIndex(fdIndex) || count < 0)
+			return false;
+		return true;
+	}
 
 	/**
 	 * Handle the halt() system call.
@@ -364,12 +382,11 @@ public class UserProcess {
 	 *
 	 * Returns the new file descriptor, or -1 if an error occurred.
 	 */
-	private int handleOpen(int fileName) {
+	private int handleOpen(int fileNameAddr) {
 		OpenFile open;
-		open = UserKernel.fileSystem.open(readVirtualMemoryString(fileName, 256), false);
-		if(open == null) { // file does not exist
+		open = UserKernel.fileSystem.open(readVirtualMemoryString(fileNameAddr, 256), false);
+		if(open == null) // file does not exist
 			return -1;
-		}
 		else {
 			// get the next available FD index
 			int availableFD = nextAvailFD();
@@ -384,33 +401,31 @@ public class UserProcess {
 	}
 	
 	private int handleClose(int fdIndex) {
-		// close this file and release any associated system resources
-		if(fdIndex < 0 || fdIndex > 15)
+		if(!checkFDIndex(fdIndex))
 			return -1;
+		// close this file and release any associated system resources
 		fileDescriptor[fdIndex].close();
 		fileDescriptor[fdIndex] = null;
 		return 0;
 	}
 	
-	private int handleCreate(int fileName) {
+	private int handleCreate(int fileNameAddr) {
 		OpenFile create;
-		create = UserKernel.fileSystem.open(readVirtualMemoryString(fileName, 256), true);
-		if(create == null) {
+		create = UserKernel.fileSystem.open(readVirtualMemoryString(fileNameAddr, 256), true);
+		if(create == null)	
 			return -1;
-		}
 		// get the next available FD index
 		int availableFD = nextAvailFD();
 		// check to see if the # of currently opened files > 16
-		if(availableFD == -1) {
+		if(availableFD == -1)	
 			return -1;
-		}
 		// make FD point to the newly created file
 		fileDescriptor[availableFD] = create;
 		return availableFD;
 	}
 	
 	private int handleRead(int fdIndex, int buffer, int count) {
-		if(fdIndex < 0 || fdIndex > 15 || count <= 0) {
+		if(!checkThreeArgs(fdIndex, buffer, count)) {
 			return -1;
 		}
 		int bufsize = 1024;
@@ -439,7 +454,7 @@ public class UserProcess {
 	}
 	
 	private int handleWrite(int fdIndex, int buffer, int count) {
-		if(fdIndex < 0 || fdIndex > 15 || count <= 0) {
+		if(!checkThreeArgs(fdIndex, buffer, count)) {
 			return -1;
 		}
 		int bufsize = 1024;
@@ -451,43 +466,35 @@ public class UserProcess {
 		
 		OpenFile fileToBeWritten = fileDescriptor[fdIndex];
 		byte[] buf = new byte[1024];
-		while(bytesLeft > 0)
-		{	
-		   if (bytesLeft >bufsize)
-			   {
+		while(bytesLeft > 0) {	
+		   if (bytesLeft >bufsize) {
 			     transferred = readVirtualMemory(buffer, buf, bytesWritten, bufsize);
 		         written = fileToBeWritten.write(buf, bytesWritten, bufsize);
 		         if (transferred != written)
 		        	 return -1;
-		         else
-		         {
+		         else {
 		        	 bytesLeft -= bufsize;
 		        	 bytesWritten += bufsize; 
 		        	 successfulWrite += written;
 		         }
-			   }
-		   else
-		   {
+		   }
+		   else {
 			   transferred = readVirtualMemory(buffer, buf, bytesWritten, bytesLeft);
 			   written = fileToBeWritten.write(buf, bytesWritten, bytesLeft);
 			   if (transferred != written)
-			   {
-				   return -1;
-			   }
-			   else
-			   {
+				   return -1; 
+			   else {
 		          bytesLeft = 0;
 		          bytesWritten +=  bytesLeft;
 		          successfulWrite += written;
 			   }
 		   }
 		}
-			return successfulWrite;
-		
+		return successfulWrite;
 	}
 	
-	private int handleUnlink(int fileName) {
-		String file = readVirtualMemoryString(fileName, 256);
+	private int handleUnlink(int fileNameAddr) {
+		String file = readVirtualMemoryString(fileNameAddr, 256);
 		boolean success;
 		success = UserKernel.fileSystem.remove(file);
 		if(success)

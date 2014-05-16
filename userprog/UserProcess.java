@@ -6,6 +6,7 @@ import nachos.userprog.*;
 
 import java.io.EOFException;
 import java.util.*;
+import java.nio.ByteBuffer;
 
 /**
  * Encapsulates the state of a user process that is not contained in its user
@@ -38,6 +39,8 @@ public class UserProcess {
 		activeProcessLock.acquire();
 		++activeProcess;
 		activeProcessLock.release();
+		joinCondition = new Condition(joinLock);
+		children = new LinkedList<UserProcess>();
 	}
 
 	/**
@@ -520,7 +523,7 @@ public class UserProcess {
 		if(!checkThreeArgs(fdIndex, buffer, count)) {
 			return -1;
 		}
-		int bufsize = 64;
+		int bufsize = 1024;
 		int bytesWritten = 0;
 		int bytesLeft = count;
 		int successfulWrite = 0;
@@ -528,14 +531,14 @@ public class UserProcess {
 		byte[] buf = new byte[bufsize];
 		while(bytesLeft > 0) {
 			if(bytesLeft >= bufsize) {
-				if(fileToBeRead.read(bytesWritten, buf, 0, bufsize) == -1)
+				if(fileToBeRead.read(buf, 0, bufsize) == -1)
 					return -1;
 				successfulWrite += writeVirtualMemory(buffer+bytesWritten, buf, 0, bufsize);
 				bytesLeft -= bufsize;
 				bytesWritten += bufsize;
 			}
 			else {
-				if(fileToBeRead.read(bytesWritten, buf, 0, bytesLeft) == -1) 
+				if(fileToBeRead.read(buf, 0, bytesLeft) == -1) 
 					return -1;
 				successfulWrite = writeVirtualMemory(buffer+bytesWritten, buf, 0, bytesLeft);
 				bytesWritten += bytesLeft;
@@ -549,7 +552,7 @@ public class UserProcess {
 		if(!checkThreeArgs(fdIndex, buffer, count)) {
 			return -1;
 		}
-		int bufsize = 64;
+		int bufsize = 1024;
 		int bytesWritten = 0;
 		int bytesLeft = count;
 		int successfulWrite = 0;
@@ -561,7 +564,7 @@ public class UserProcess {
 		while(bytesLeft > 0) {
 			if (bytesLeft >= bufsize) {
 				transferred = readVirtualMemory(buffer+bytesWritten, buf, 0, bufsize);
-				written = fileToBeWritten.write(bytesWritten, buf, 0, bufsize);
+				written = fileToBeWritten.write(buf, 0, bufsize);
 				if (transferred != written)
 		        	 return -1;
 				else {
@@ -572,7 +575,7 @@ public class UserProcess {
 		   }
 		   else {
 			   transferred = readVirtualMemory(buffer+bytesWritten, buf, 0, bytesLeft);
-			   written = fileToBeWritten.write(bytesWritten, buf, 0, bytesLeft);
+			   written = fileToBeWritten.write(buf, 0, bytesLeft);
 			   if (transferred != written)
 				   return -1; 
 			   else {
@@ -594,6 +597,45 @@ public class UserProcess {
 		return -1;
 	}
 	
+	private int handleExec(int fileNamePtr, int argc, int argvPtr) {
+		if(argc <= 0)
+			return -1;
+		String fileName = readVirtualMemoryString(fileNamePtr, 256);
+		String [] argv = new String[argc];
+		for(int i = 0; i < argc; i++) {
+			argv[i] = readVirtualMemoryString((argvPtr + (i * 4)), 256);
+		}
+		UserProcess newChild = UserProcess.newUserProcess();
+		children.add(newChild);
+		if(newChild.execute(fileName, argv)) 
+			return newChild.pid;
+		return -1;
+	}
+	
+	private int handleJoin(int processID, int statusPtr) {
+		UserProcess childProcess = null;
+		for(UserProcess child : children) {
+			if(child.pid == processID) {
+				childProcess = child;
+			}
+		}
+		if(childProcess == null)
+			return -1;
+		if(!childProcess.hasExit) {
+			joinLock.acquire();
+			joinCondition.sleep();
+			joinLock.release();
+			// disown child process
+			children.remove(childProcess);
+			ByteBuffer b = ByteBuffer.allocate(4);
+			byte[] status = b.putInt(childProcess.status).array();
+			writeVirtualMemory(statusPtr, status);
+		}
+		if(childProcess.normalExit)
+			return 1;
+		return 0;
+	}
+	
 	private void handleExit(int status) {
 		// close fileDescriptors
 		for(OpenFile fd : fileDescriptor) {
@@ -606,18 +648,17 @@ public class UserProcess {
 		coff.close();
 		this.status = status;
 		unloadSections();
+		hasExit = true;
 		activeProcessLock.acquire();
 		activeProcess--;
+		joinCondition.wake();
 		if(activeProcess > 1) {
 			activeProcessLock.release();
 			KThread.finish();
 		}
 		else {
 			activeProcessLock.release();
-			if(pid != 0)
-				UserKernel.kernel.terminate();
-			else
-				handleHalt();
+			UserKernel.kernel.terminate();
 		}
 	}
 
@@ -688,7 +729,6 @@ public class UserProcess {
 	 * @return the value to be returned to the user.
 	 */
 	public int handleSyscall(int syscall, int a0, int a1, int a2, int a3) {
-		System.err.println(syscall);
 		switch (syscall) {
 		case syscallHalt:
 			return handleHalt();
@@ -704,10 +744,16 @@ public class UserProcess {
 			return handleClose(a0);
 		case syscallUnlink:
 			return handleUnlink(a0);
+		case syscallJoin:
+			return handleJoin(a0, a1);
+		case syscallExec:
+			return handleExec(a0, a1, a2);
 		case syscallExit:
 			handleExit(a0);
 			break;
 		default:
+			normalExit = false;
+			handleExit(-1);
 			Lib.debug(dbgProcess, "Unknown syscall " + syscall);
 			Lib.assertNotReached("Unknown system call!");
 		}
@@ -764,15 +810,27 @@ public class UserProcess {
 
 	private static final char dbgProcess = 'a';
 	
-	private int status;
+	public static Lock pidCounterLock = new Lock();
 	
-	private static Lock pidCounterLock = new Lock();
+	public static Lock activeProcessLock = new Lock();
 	
-	private static Lock activeProcessLock = new Lock();
+	private Lock joinLock = new Lock();
 	
-	private static int pidCounter;
+	private Condition joinCondition;
+	
+	public static int pidCounter;
+	
+	public static int activeProcess;
+	
+	private LinkedList<UserProcess> children;
 	
 	private int pid;
 	
-	private int activeProcess;
+	private int status;
+	
+	private boolean normalExit = true;
+	
+	//private KThread processThread;
+	
+	private boolean hasExit;
 }

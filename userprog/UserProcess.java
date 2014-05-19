@@ -67,7 +67,6 @@ public class UserProcess {
 			return false;
 
 		new UThread(this).setName(name).fork();
-
 		return true;
 	}
 
@@ -270,7 +269,6 @@ public class UserProcess {
 			Lib.debug(dbgProcess, "\topen failed");
 			return false;
 		}
-
 		try {
 			coff = new Coff(executable);
 		}
@@ -300,12 +298,12 @@ public class UserProcess {
 			// 4 bytes for argv[] pointer; then string plus one for null byte
 			argsSize += 4 + argv[i].length + 1;
 		}
+		
 		if (argsSize > pageSize) {
 			coff.close();
 			Lib.debug(dbgProcess, "\targuments too long");
 			return false;
 		}
-
 		// program counter initially points at the program entry point
 		initialPC = coff.getEntryPoint();
 
@@ -384,7 +382,6 @@ public class UserProcess {
 
         UserKernel.pagesLock.acquire();
 		pageTable = new TranslationEntry[numPages];
-		// with/without parenthesis?
 		for (int i = 0; i < numPages; i++)
 			pageTable[i] = new TranslationEntry(i, UserKernel.freePhysicalPages.removeFirst(), true, false, false, false);
 		UserKernel.pagesLock.release();
@@ -598,17 +595,22 @@ public class UserProcess {
 	}
 	
 	private int handleExec(int fileNamePtr, int argc, int argvPtr) {
-		if(argc <= 0)
+		if(argc < 0)
 			return -1;
 		String fileName = readVirtualMemoryString(fileNamePtr, 256);
 		String [] argv = new String[argc];
 		for(int i = 0; i < argc; i++) {
-			argv[i] = readVirtualMemoryString((argvPtr + (i * 4)), 256);
+			byte [] byteAddr = new byte[4];
+			readVirtualMemory(argvPtr + (i * 4), byteAddr);
+			int argvAddr = Lib.bytesToInt(byteAddr, 0);
+			argv[i] = readVirtualMemoryString(argvAddr, 256);
 		}
 		UserProcess newChild = UserProcess.newUserProcess();
 		children.add(newChild);
-		if(newChild.execute(fileName, argv)) 
+		newChild.parent = this;
+		if(newChild.execute(fileName, argv)) {
 			return newChild.pid;
+		}
 		return -1;
 	}
 	
@@ -623,10 +625,12 @@ public class UserProcess {
 			return -1;
 		if(!childProcess.hasExit) {
 			joinLock.acquire();
+			this.joiningChild = childProcess;
 			joinCondition.sleep();
 			joinLock.release();
 			// disown child process
 			children.remove(childProcess);
+			// write child process's exit status into memory
 			ByteBuffer b = ByteBuffer.allocate(4);
 			byte[] status = b.putInt(childProcess.status).array();
 			writeVirtualMemory(statusPtr, status);
@@ -651,7 +655,14 @@ public class UserProcess {
 		hasExit = true;
 		activeProcessLock.acquire();
 		activeProcess--;
-		joinCondition.wake();
+		if(parent != null) {
+			if(this == parent.joiningChild) {
+				parent.joinLock.acquire();
+				parent.joinCondition.wake();
+				parent.joinLock.release();
+			}
+		}
+		//parent.children.remove(this);
 		if(activeProcess > 1) {
 			activeProcessLock.release();
 			KThread.finish();
@@ -831,6 +842,10 @@ public class UserProcess {
 	private boolean normalExit = true;
 	
 	//private KThread processThread;
+	
+	private UserProcess parent;
+	
+	private UserProcess joiningChild;
 	
 	private boolean hasExit;
 }

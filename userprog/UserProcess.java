@@ -6,7 +6,6 @@ import nachos.userprog.*;
 
 import java.io.EOFException;
 import java.util.*;
-import java.nio.ByteBuffer;
 
 /**
  * Encapsulates the state of a user process that is not contained in its user
@@ -33,13 +32,7 @@ public class UserProcess {
 		// initialize FD 0,1 with stdin and stdout
 		fileDescriptor[0] = UserKernel.console.openForReading();
 		fileDescriptor[1] = UserKernel.console.openForWriting();
-		pidCounterLock.acquire();
 		pid = pidCounter++;
-		pidCounterLock.release();
-		activeProcessLock.acquire();
-		++activeProcess;
-		activeProcessLock.release();
-		joinCondition = new Condition(joinLock);
 		children = new LinkedList<UserProcess>();
 	}
 
@@ -66,7 +59,10 @@ public class UserProcess {
 		if (!load(name, args))
 			return false;
 
-		new UThread(this).setName(name).fork();
+		pThread = new UThread(this);
+		if(firstThread == null)
+			firstThread = this.pThread;
+		pThread.setName(name).fork();
 		return true;
 	}
 
@@ -156,7 +152,7 @@ public class UserProcess {
 		int amount = Math.min(length, memory.length - vaddr);
 		System.arraycopy(memory, vaddr, data, offset, amount);
 
-		return amount; */
+		return amount; */ 
 		int amount = 0;
         int totalByteRead = 0;
         int pageLocation = 0;
@@ -223,7 +219,7 @@ public class UserProcess {
 		int amount = Math.min(length, memory.length - vaddr);
 		System.arraycopy(data, offset, memory, vaddr, amount);
 
-		return amount;*/
+		return amount; */
 		int amount = 0;
         int totalByteWrite = 0;
         int pageLocation = 0;
@@ -598,12 +594,20 @@ public class UserProcess {
 		if(argc < 0)
 			return -1;
 		String fileName = readVirtualMemoryString(fileNamePtr, 256);
+		// return -1 if we cannot find the given executable in our system
+		if(fileName == null)
+			return -1;
 		String [] argv = new String[argc];
 		for(int i = 0; i < argc; i++) {
 			byte [] byteAddr = new byte[4];
-			readVirtualMemory(argvPtr + (i * 4), byteAddr);
+			// dereference once to get the memory address of where argv[i] is stored
+			if(readVirtualMemory(argvPtr + (i * 4), byteAddr) != 4)
+				return -1;
 			int argvAddr = Lib.bytesToInt(byteAddr, 0);
+			// dereference twice to get argv[i]
 			argv[i] = readVirtualMemoryString(argvAddr, 256);
+			if(argv[i] == null)
+				return -1;
 		}
 		UserProcess newChild = UserProcess.newUserProcess();
 		children.add(newChild);
@@ -619,21 +623,23 @@ public class UserProcess {
 		for(UserProcess child : children) {
 			if(child.pid == processID) {
 				childProcess = child;
+				break;
 			}
 		}
 		if(childProcess == null)
 			return -1;
+		// only join with child if child process is still active
 		if(!childProcess.hasExit) {
-			joinLock.acquire();
+			/*joinLock.acquire();
 			this.joiningChild = childProcess;
 			joinCondition.sleep();
-			joinLock.release();
+			joinLock.release();*/
+			// put currentThread (parent) into waitQueue, so wait until child process finishes
+			childProcess.pThread.join();
 			// disown child process
 			children.remove(childProcess);
 			// write child process's exit status into memory
-			ByteBuffer b = ByteBuffer.allocate(4);
-			byte[] status = b.putInt(childProcess.status).array();
-			writeVirtualMemory(statusPtr, status);
+			writeVirtualMemory(statusPtr, Lib.bytesFromInt(childProcess.status));
 		}
 		if(childProcess.normalExit)
 			return 1;
@@ -642,10 +648,9 @@ public class UserProcess {
 	
 	private void handleExit(int status) {
 		// close fileDescriptors
-		for(OpenFile fd : fileDescriptor) {
-			if(fd != null) {
-				fd.close();
-				fd = null;
+		for(int i = 0; i < fileDescriptor.length; i++) {
+			if(fileDescriptor[i] != null) {
+				handleClose(i);
 			}
 		}
 		// close coff section
@@ -653,24 +658,23 @@ public class UserProcess {
 		this.status = status;
 		unloadSections();
 		hasExit = true;
-		activeProcessLock.acquire();
-		activeProcess--;
-		if(parent != null) {
-			if(this == parent.joiningChild) {
-				parent.joinLock.acquire();
-				parent.joinCondition.wake();
-				parent.joinLock.release();
-			}
+		
+		// remove children/parent relationship
+		while(!children.isEmpty()) {
+			children.get(0).parent = null;
+			children.remove(0);
 		}
-		//parent.children.remove(this);
-		if(activeProcess > 1) {
-			activeProcessLock.release();
-			KThread.finish();
-		}
-		else {
-			activeProcessLock.release();
+		/*if(parent != null && this == parent.joiningChild) {
+			parent.joinLock.acquire();
+			parent.joinCondition.wake();
+			parent.joinLock.release();
+		}*/
+		if(this.pThread == UserProcess.firstThread) {
+			// finish the thread in 'this' process
 			UserKernel.kernel.terminate();
 		}
+		else
+			pThread.finish();
 	}
 
 	private static final int syscallHalt = 0, syscallExit = 1, syscallExec = 2,
@@ -740,6 +744,7 @@ public class UserProcess {
 	 * @return the value to be returned to the user.
 	 */
 	public int handleSyscall(int syscall, int a0, int a1, int a2, int a3) {
+		System.err.println("syscall: " + syscall);
 		switch (syscall) {
 		case syscallHalt:
 			return handleHalt();
@@ -761,7 +766,6 @@ public class UserProcess {
 			return handleExec(a0, a1, a2);
 		case syscallExit:
 			handleExit(a0);
-			break;
 		default:
 			normalExit = false;
 			handleExit(-1);
@@ -825,9 +829,9 @@ public class UserProcess {
 	
 	public static Lock activeProcessLock = new Lock();
 	
-	private Lock joinLock = new Lock();
+	//private Lock joinLock = new Lock();
 	
-	private Condition joinCondition;
+	//private Condition joinCondition;
 	
 	public static int pidCounter;
 	
@@ -841,11 +845,13 @@ public class UserProcess {
 	
 	private boolean normalExit = true;
 	
-	//private KThread processThread;
+	private UThread pThread;
 	
 	private UserProcess parent;
 	
-	private UserProcess joiningChild;
+	//private UserProcess joiningChild;
+	
+	private static UThread firstThread;
 	
 	private boolean hasExit;
 }

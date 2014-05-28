@@ -4,7 +4,7 @@ import nachos.machine.*;
 import nachos.threads.*;
 import nachos.userprog.*;
 
-import java.util.*;
+import java.util.LinkedList;
 
 /**
  * A kernel that can support multiple user processes.
@@ -25,20 +25,18 @@ public class UserKernel extends ThreadedKernel {
 		super.initialize(args);
 
 		console = new SynchConsole(Machine.console());
-		
-		freePhysicalPages = new LinkedList<Integer>();
-        pagesLock = new Lock();
-        
-        pagesLock.acquire();
-        for (int i=0; i < Machine.processor().getNumPhysPages(); i++)
-        	freePhysicalPages.add(i);
-        pagesLock.release();
 
 		Machine.processor().setExceptionHandler(new Runnable() {
 			public void run() {
 				exceptionHandler();
 			}
 		});
+
+		processLock = new Lock();
+
+		memoryLock = new Lock();
+		for (int ppn = 0; ppn < Machine.processor().getNumPhysPages(); ppn++)
+			freePages.add(new Integer(ppn));
 	}
 
 	/**
@@ -120,12 +118,18 @@ public class UserKernel extends ThreadedKernel {
 
 	/** Globally accessible reference to the synchronized console. */
 	public static SynchConsole console;
+	/** Guards access to process data: lists, exit status tables, etc. */
+	public static Lock processLock;
+	/** The process ID to assign to the next process. */
+	public static int nextProcessID = 0;
+	/** The number of started processes that have not yet terminated. */
+	public static int numRunningProcesses = 0;
+
+	/** Guards access to the physical page free list. */
+	public static Lock memoryLock;
+	/** The physical page free list. */
+	public static LinkedList<Integer> freePages = new LinkedList<Integer>();
 
 	// dummy variables to make javac smarter
 	private static Coff dummy1 = null;
-	
-    // a global linked list of free physical pages
-    public static LinkedList<Integer> freePhysicalPages;
-
-    public static Lock pagesLock;
 }

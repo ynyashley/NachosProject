@@ -29,7 +29,7 @@ public class VMProcess extends UserProcess {
 	 * <tt>UThread.restoreState()</tt>.
 	 */
 	public void restoreState() {
-		super.restoreState();
+		//super.restoreState();
 	}
 
 	/**
@@ -54,15 +54,54 @@ public class VMProcess extends UserProcess {
 	 * . The <i>cause</i> argument identifies which exception occurred; see the
 	 * <tt>Processor.exceptionZZZ</tt> constants.
 	 * 
-	 * @param cause the user exception that occurred.
+	 * @param cause
+	 *            the user exception that occurred.
 	 */
 	public void handleException(int cause) {
 		Processor processor = Machine.processor();
 
 		switch (cause) {
+		case Processor.exceptionTLBMiss:
+			handleTLBMiss();
+			break;
 		default:
 			super.handleException(cause);
 			break;
+		}
+	}
+
+	private void handleTLBMiss() {
+		// Get VPN
+		//System.out.println("In handleTLBMiss");
+		int virtualAddress = Machine.processor().readRegister(
+				Processor.regBadVAddr);
+		int vpn = Processor.pageFromAddress(virtualAddress);
+		TranslationEntry entry = pageTable[vpn];
+
+		if (entry.valid) {
+			boolean invalidEntryFound = false;
+			// try to find an invalid TLB entry to evict
+			for (int i = 0; i < Machine.processor().getTLBSize(); i++) {
+				if (!Machine.processor().readTLBEntry(i).valid) {
+					invalidEntryFound = true;
+					// do replacement
+					Machine.processor().writeTLBEntry(i, entry);
+					break;
+				}
+			}
+			if (!invalidEntryFound) {
+				// evict a victim
+				int victimIndex = Lib.random(Machine.processor().getTLBSize());
+				TranslationEntry victim = Machine.processor().readTLBEntry(victimIndex);
+				// sync entry with page table
+				pageTable[victim.vpn] = new TranslationEntry(victim.vpn,
+						victim.ppn, victim.valid, victim.readOnly, victim.used,
+						victim.dirty);
+				// update
+				Machine.processor().writeTLBEntry(victimIndex, entry);
+			}
+		} else { // page fault
+
 		}
 	}
 

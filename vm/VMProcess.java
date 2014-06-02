@@ -15,6 +15,7 @@ public class VMProcess extends UserProcess {
 	 */
 	public VMProcess() {
 		super();
+		pageTableLock = new Lock();
 	}
 
 	/**
@@ -22,7 +23,6 @@ public class VMProcess extends UserProcess {
 	 * Called by <tt>UThread.saveState()</tt>.
 	 */
 	public void saveState() {
-		// TODO: add pagetable lock
 		/*
 		 * Flush TLB on context switch
 		 */
@@ -30,9 +30,14 @@ public class VMProcess extends UserProcess {
 			TranslationEntry entry = Machine.processor().readTLBEntry(i);
 			// sync entry with page table if entry is valid
 			if (entry.valid) {
+				pageTableLock.acquire();
 				pageTable[entry.vpn] = new TranslationEntry(entry.vpn,
 						entry.ppn, entry.valid, entry.readOnly, entry.used,
 						entry.dirty);
+				pageTableLock.release();
+				VMKernel.iptLock.acquire();
+				VMKernel.ipt[entry.ppn].setEntry(entry);
+				VMKernel.iptLock.release();
 			}
 			// invalidate entry
 			entry.valid = false;
@@ -75,10 +80,10 @@ public class VMProcess extends UserProcess {
 	 */
 	public void handleException(int cause) {
 		Processor processor = Machine.processor();
-
+		int virtualAddress = processor.readRegister(Processor.regBadVAddr);
 		switch (cause) {
 		case Processor.exceptionTLBMiss:
-			handleTLBMiss();
+			handleTLBMiss(virtualAddress);
 			break;
 		default:
 			super.handleException(cause);
@@ -86,10 +91,8 @@ public class VMProcess extends UserProcess {
 		}
 	}
 
-	private void handleTLBMiss() {
+	private void handleTLBMiss(int virtualAddress) {
 		// Get VPN
-		int virtualAddress = Machine.processor().readRegister(
-				Processor.regBadVAddr);
 		int vpn = Processor.pageFromAddress(virtualAddress);
 		TranslationEntry entry = pageTable[vpn];
 
@@ -110,18 +113,23 @@ public class VMProcess extends UserProcess {
 				TranslationEntry victim = Machine.processor().readTLBEntry(
 						victimIndex);
 				// sync entry with page table
+				pageTableLock.acquire();
 				pageTable[victim.vpn] = new TranslationEntry(victim.vpn,
 						victim.ppn, victim.valid, victim.readOnly, victim.used,
 						victim.dirty);
+				pageTableLock.release();
+				VMKernel.iptLock.acquire();
+				VMKernel.ipt[victim.ppn].setEntry(victim);
+				VMKernel.iptLock.release();
 				// update
 				Machine.processor().writeTLBEntry(victimIndex, entry);
 			}
 		} else { // page fault
-			handlePageFault(entry);
+			handlePageFault(entry, vpn);
 		}
 	}
 
-	private void handlePageFault(TranslationEntry entry) {
+	private void handlePageFault(TranslationEntry entry, int vpn) {
 		int ppn = allocatePhysicalPage(entry);
 		if (entry.dirty) { // swap in
 			int index = entry.ppn;
@@ -134,12 +142,11 @@ public class VMProcess extends UserProcess {
 			VMKernel.freeSwapPages.set(index, false);
 			VMKernel.unpinPage(ppn);
 		} else {
-			// TODO: Not sure if our code is right
 			entry.ppn = ppn;
 			VMKernel.pinPage(ppn);
 			entry.valid = true;
 			CoffSection section = coff.getSection(entry.vpn);
-			section.loadPage((entry.vpn - section.getFirstVPN()), ppn);
+			section.loadPage((vpn - section.getFirstVPN()), ppn);
 			VMKernel.unpinPage(ppn);
 		}
 		// sync page table and inverted page table
@@ -150,9 +157,7 @@ public class VMProcess extends UserProcess {
 
 	private int allocatePhysicalPage(TranslationEntry entry) {
 		int ppn = 0;
-		if (UserKernel.freePages.isEmpty()) { // no free memory, need to evict a
-												// page
-			// TODO: sync TLB entries
+		if (UserKernel.freePages.isEmpty()) { // no free memory, need to evict a page
 			ppn = clockAlgorithm(); // select a victim for replacement
 
 		} else { // allocate a free page from list
@@ -212,6 +217,8 @@ public class VMProcess extends UserProcess {
 		VMKernel.freeSwapPages.add(new Boolean(true));
 		return (VMKernel.freeSwapPages.size() - 1);
 	}
+	
+	private static Lock pageTableLock;
 
 	private static final int pageSize = Processor.pageSize;
 

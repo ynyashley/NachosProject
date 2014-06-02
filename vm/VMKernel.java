@@ -17,7 +17,7 @@ public class VMKernel extends UserKernel {
 	public VMKernel() {
 		super();
 		ipt = new PageTableEntryInfo[Machine.processor().getNumPhysPages()];
-		swapFile = ThreadedKernel.fileSystem.open("swapFile", true);
+		swapFile = fileSystem.open("swapFile", true);
 		freeSwapPages = new LinkedList<Boolean>();
 		iptLock = new Lock();
 	}

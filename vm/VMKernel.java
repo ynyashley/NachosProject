@@ -16,10 +16,6 @@ public class VMKernel extends UserKernel {
 	 */
 	public VMKernel() {
 		super();
-		ipt = new PageTableEntryInfo[Machine.processor().getNumPhysPages()];
-		swapFile = fileSystem.open("swapFile", true);
-		freeSwapPages = new LinkedList<Boolean>();
-		iptLock = new Lock();
 	}
 
 	/**
@@ -27,6 +23,10 @@ public class VMKernel extends UserKernel {
 	 */
 	public void initialize(String[] args) {
 		super.initialize(args);
+		ipt = new PageTableEntryInfo[Machine.processor().getNumPhysPages()];
+		freeSwapPages = new LinkedList<Boolean>();
+		iptLock = new Lock();
+		swapFile = fileSystem.open("swapFile", true);
 	}
 
 	/**

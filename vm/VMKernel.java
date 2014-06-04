@@ -24,6 +24,9 @@ public class VMKernel extends UserKernel {
 	public void initialize(String[] args) {
 		super.initialize(args);
 		ipt = new PageTableEntryInfo[Machine.processor().getNumPhysPages()];
+		for(int i = 0; i < ipt.length; i++) {
+			ipt[i] = new PageTableEntryInfo();
+		}
 		freeSwapPages = new LinkedList<Boolean>();
 		iptLock = new Lock();
 		swapFile = fileSystem.open("swapFile", true);
@@ -54,7 +57,9 @@ public class VMKernel extends UserKernel {
 		private int processID;
 		private TranslationEntry entry;
 		private int pinCount;
-		private boolean freeWhenUnpinned;
+		
+		public PageTableEntryInfo() {
+		}
 		
 		public int getProcessID() {
 			return processID;
@@ -73,12 +78,6 @@ public class VMKernel extends UserKernel {
 		}
 		public void setPinCount(int pinCount) {
 			this.pinCount = pinCount;
-		}
-		public boolean isFreeWhenUnpinned() {
-			return freeWhenUnpinned;
-		}
-		public void setFreeWhenUnpinned(boolean freeWhenUnpinned) {
-			this.freeWhenUnpinned = freeWhenUnpinned;
 		}
 	}
 	

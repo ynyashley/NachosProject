@@ -50,7 +50,7 @@ public class VMProcess extends UserProcess {
 	 * <tt>UThread.restoreState()</tt>.
 	 */
 	public void restoreState() {
-		super.restoreState();
+		//super.restoreState();
 	}
 
 	/**
@@ -60,7 +60,28 @@ public class VMProcess extends UserProcess {
 	 * @return <tt>true</tt> if successful.
 	 */
 	protected boolean loadSections() {
-		return super.loadSections();
+		pageTable = new TranslationEntry[numPages];
+
+		for (int vpn = 0; vpn < numPages; vpn++) {
+			pageTable[vpn] = new TranslationEntry(vpn, -1, false, false, false,
+					false);
+		}
+
+		// load sections
+		for (int s = 0; s < coff.getNumSections(); s++) {
+			CoffSection section = coff.getSection(s);
+
+			Lib.debug(dbgProcess, "\tinitializing " + section.getName()
+					+ " section (" + section.getLength() + " pages)");
+
+			for (int i = 0; i < section.getLength(); i++) {
+				int vpn = section.getFirstVPN() + i;
+
+				pageTable[vpn].readOnly = section.isReadOnly();
+				pageTable[vpn].vpn = s;
+			}
+		}
+		return true;
 	}
 
 	/**
@@ -92,7 +113,7 @@ public class VMProcess extends UserProcess {
 	}
 
 	private void handleTLBMiss(int virtualAddress) {
-		// Get VPN
+		System.err.println("===============IN HANDLE TLBMISS==================");
 		int vpn = Processor.pageFromAddress(virtualAddress);
 		TranslationEntry entry = pageTable[vpn];
 
@@ -108,6 +129,7 @@ public class VMProcess extends UserProcess {
 				}
 			}
 			if (!invalidEntryFound) {
+				System.err.println("==========ALL VALID ENTRIES: RANDOMLY EVICT A VICTIM==========");
 				// randomly evict a victim
 				int victimIndex = Lib.random(Machine.processor().getTLBSize());
 				TranslationEntry victim = Machine.processor().readTLBEntry(
@@ -125,6 +147,7 @@ public class VMProcess extends UserProcess {
 				Machine.processor().writeTLBEntry(victimIndex, entry);
 			}
 		} else { // page fault
+			System.err.println("PAGE FAULT");
 			handlePageFault(entry, vpn);
 		}
 	}
@@ -132,9 +155,9 @@ public class VMProcess extends UserProcess {
 	private void handlePageFault(TranslationEntry entry, int vpn) {
 		int ppn = allocatePhysicalPage(entry);
 		if (entry.dirty) { // swap in
+			System.err.println("=======================WRITING DATA FROM SWAP=====================");
 			int index = entry.ppn;
 			entry.ppn = ppn;
-			// TODO: may not pinPage
 			VMKernel.pinPage(ppn);
 			entry.valid = true;
 			VMKernel.swapFile.read(index * pageSize, Machine.processor()
@@ -142,6 +165,7 @@ public class VMProcess extends UserProcess {
 			VMKernel.freeSwapPages.set(index, false);
 			VMKernel.unpinPage(ppn);
 		} else {
+			System.err.println("======================WRITING DATA FROM COFF========================");
 			entry.ppn = ppn;
 			VMKernel.pinPage(ppn);
 			entry.valid = true;
@@ -156,20 +180,27 @@ public class VMProcess extends UserProcess {
 	}
 
 	private int allocatePhysicalPage(TranslationEntry entry) {
+		System.err.println("================ALLOCATING PHYSICAL PAGE====================");
 		int ppn = 0;
 		if (UserKernel.freePages.isEmpty()) { // no free memory, need to evict a page
 			ppn = clockAlgorithm(); // select a victim for replacement
 
 		} else { // allocate a free page from list
+			System.out.println("==================STILL HAVE FREE PAGES=======================");
 			ppn = ((Integer) UserKernel.freePages.removeFirst()).intValue();
-			// TODO: just keep the old values of the other bits?
-			pageTable[entry.vpn] = new TranslationEntry(entry.vpn, ppn,
+			TranslationEntry newEntry = new TranslationEntry(entry.vpn, ppn,
 					entry.valid, entry.readOnly, entry.used, entry.dirty);
+			pageTable[entry.vpn] = newEntry;
+			VMKernel.ipt[ppn].setProcessID(super.processID());
+			VMKernel.ipt[ppn].setEntry(newEntry);
+			VMKernel.ipt[ppn].setPinCount(0);
 		}
+		System.err.println("===============FINISHED ALLOCATING PHY PAGE===================");
 		return ppn;
 	}
 
 	private int clockAlgorithm() {
+		System.err.println("===================BEGIN CLOCK ALGORITHM========================");
 		int clockHand = 0;
 		TranslationEntry victim = null;
 		while (UserKernel.freePages.isEmpty()) {
@@ -181,9 +212,6 @@ public class VMProcess extends UserProcess {
 					victim = frame.getEntry();
 					if (victim.dirty) { // swap the page out
 						int index = assignSwapSpace();
-						// byte [] memory = new byte[pageSize];
-						// TODO: not sure about victim.vpn*pageSize
-						// readVirtualMemory(victim.vpn*pageSize, memory);
 						VMKernel.swapFile.write(index * pageSize, Machine
 								.processor().getMemory(),
 								victim.ppn * pageSize, pageSize);

@@ -29,6 +29,8 @@ public class VMKernel extends UserKernel {
 		}
 		freeSwapPages = new LinkedList<Boolean>();
 		iptLock = new Lock();
+		tlbLock = new Lock();
+		freeSwapPagesLock = new Lock();
 		swapFile = fileSystem.open("swapFile", true);
 	}
 
@@ -88,20 +90,70 @@ public class VMKernel extends UserKernel {
 	public static PageTableEntryInfo[] ipt;
 	
 	public static Lock iptLock;
+	
+	public static Lock tlbLock;
+	
+	public static Lock freeSwapPagesLock;
+	
+	private static boolean iptLockAcquired;
+	
+	private static boolean tlbLockAcquired;
+	
+	private static boolean freeSwapPagesLockAcquired;
+	
 	// dummy variables to make javac smarter
 	private static VMProcess dummy1 = null;
 
 	private static final char dbgVM = 'v';
 
 	public static void pinPage(int ppn) {
-		iptLock.acquire();
+		iptLockAcquire();
 		ipt[ppn].setPinCount(++ipt[ppn].pinCount);
-		iptLock.release();
+		iptLockRelease();
 	}
 
 	public static void unpinPage(int ppn) {
-		iptLock.acquire();
+		iptLockAcquire();
 		ipt[ppn].setPinCount(--ipt[ppn].pinCount);
-		iptLock.release();
+		iptLockRelease();
+	}
+	
+	public static void iptLockAcquire() {
+		if(!VMKernel.iptLock.isHeldByCurrentThread()) {
+			VMKernel.iptLock.acquire();
+			iptLockAcquired = true;
+		}
+	}
+	
+	public static void iptLockRelease() {
+		if(!VMKernel.iptLock.isHeldByCurrentThread() && iptLockAcquired) {
+			VMKernel.iptLock.release();
+		}
+	}
+	
+	public static void tlbLockAcquire() {
+		if(!VMKernel.tlbLock.isHeldByCurrentThread()) {
+			VMKernel.tlbLock.acquire();
+			tlbLockAcquired = true;
+		}
+	}
+	
+	public static void tlbLockRelease() {
+		if(!VMKernel.tlbLock.isHeldByCurrentThread() && tlbLockAcquired) {
+			VMKernel.tlbLock.release();
+		}
+	}
+	
+	public static void freeSwapPagesLockAcquire() {
+		if(!VMKernel.freeSwapPagesLock.isHeldByCurrentThread()) {
+			VMKernel.freeSwapPagesLock.acquire();
+			freeSwapPagesLockAcquired = true;
+		}
+	}
+	
+	public static void freeSwapPagesLockRelease() {
+		if(!VMKernel.freeSwapPagesLock.isHeldByCurrentThread() && freeSwapPagesLockAcquired) {
+			VMKernel.freeSwapPagesLock.release();
+		}
 	}
 }

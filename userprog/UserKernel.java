@@ -3,6 +3,7 @@ package nachos.userprog;
 import nachos.machine.*;
 import nachos.threads.*;
 import nachos.userprog.*;
+import nachos.vm.VMKernel;
 
 import java.util.LinkedList;
 
@@ -115,6 +116,20 @@ public class UserKernel extends ThreadedKernel {
 	public void terminate() {
 		super.terminate();
 	}
+	
+	public static void memoryLockAcquire() {
+		if(!memoryLock.isHeldByCurrentThread() && !memoryLockAcquired) {
+			memoryLock.acquire();
+			memoryLockAcquired = true;
+		}
+	}
+	
+	public static void memoryLockRelease() {
+		if(!memoryLock.isHeldByCurrentThread() && memoryLockAcquired) {
+			memoryLock.release();
+			memoryLockAcquired = false;
+		}
+	}
 
 	/** Globally accessible reference to the synchronized console. */
 	public static SynchConsole console;
@@ -127,9 +142,11 @@ public class UserKernel extends ThreadedKernel {
 
 	/** Guards access to the physical page free list. */
 	public static Lock memoryLock;
+	
 	/** The physical page free list. */
 	public static LinkedList<Integer> freePages = new LinkedList<Integer>();
 
+	private static boolean memoryLockAcquired;
 	// dummy variables to make javac smarter
 	private static Coff dummy1 = null;
 }

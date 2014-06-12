@@ -119,7 +119,7 @@ public class VMKernel extends UserKernel {
 	}
 	
 	public static void iptLockAcquire() {
-		if(!VMKernel.iptLock.isHeldByCurrentThread()) {
+		if(!VMKernel.iptLock.isHeldByCurrentThread() && !iptLockAcquired) {
 			VMKernel.iptLock.acquire();
 			iptLockAcquired = true;
 		}
@@ -128,11 +128,13 @@ public class VMKernel extends UserKernel {
 	public static void iptLockRelease() {
 		if(!VMKernel.iptLock.isHeldByCurrentThread() && iptLockAcquired) {
 			VMKernel.iptLock.release();
+			iptLockAcquired = false;
 		}
 	}
 	
 	public static void tlbLockAcquire() {
-		if(!VMKernel.tlbLock.isHeldByCurrentThread()) {
+		System.err.println("tlbLockAcquire: " + VMKernel.tlbLock.isHeldByCurrentThread());
+		if(!VMKernel.tlbLock.isHeldByCurrentThread() && !tlbLockAcquired) {
 			VMKernel.tlbLock.acquire();
 			tlbLockAcquired = true;
 		}
@@ -141,11 +143,12 @@ public class VMKernel extends UserKernel {
 	public static void tlbLockRelease() {
 		if(!VMKernel.tlbLock.isHeldByCurrentThread() && tlbLockAcquired) {
 			VMKernel.tlbLock.release();
+			tlbLockAcquired = false;
 		}
 	}
 	
 	public static void freeSwapPagesLockAcquire() {
-		if(!VMKernel.freeSwapPagesLock.isHeldByCurrentThread()) {
+		if(!VMKernel.freeSwapPagesLock.isHeldByCurrentThread() && !freeSwapPagesLockAcquired) {
 			VMKernel.freeSwapPagesLock.acquire();
 			freeSwapPagesLockAcquired = true;
 		}
@@ -154,6 +157,7 @@ public class VMKernel extends UserKernel {
 	public static void freeSwapPagesLockRelease() {
 		if(!VMKernel.freeSwapPagesLock.isHeldByCurrentThread() && freeSwapPagesLockAcquired) {
 			VMKernel.freeSwapPagesLock.release();
+			freeSwapPagesLockAcquired = false;
 		}
 	}
 }

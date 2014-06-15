@@ -118,13 +118,15 @@ public class UserKernel extends ThreadedKernel {
 	}
 	
 	public static void memoryLockAcquire() {
-		if(!memoryLock.isHeldByCurrentThread() && !memoryLockAcquired) {
+		//System.err.println("Lock Acquire memoryLockAcquire: " + UserKernel.memoryLock.isHeldByCurrentThread());
+                if(!memoryLock.isHeldByCurrentThread() && !memoryLockAcquired) {
 			memoryLock.acquire();
 			memoryLockAcquired = true;
 		}
 	}
 	
 	public static void memoryLockRelease() {
+              // System.err.println("Lock Release memoryLockAcquire: " + UserKernel.memoryLock.isHeldByCurrentThread());
 		if(!memoryLock.isHeldByCurrentThread() && memoryLockAcquired) {
 			memoryLock.release();
 			memoryLockAcquired = false;

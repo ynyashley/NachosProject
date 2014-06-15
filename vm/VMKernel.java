@@ -27,7 +27,7 @@ public class VMKernel extends UserKernel {
 		for(int i = 0; i < ipt.length; i++) {
 			ipt[i] = new PageTableEntryInfo();
 		}
-		freeSwapPages = new LinkedList<Boolean>();
+		freeSwapPages = new LinkedList<indexAtFreeSwapPages>();
 		iptLock = new Lock();
 		tlbLock = new Lock();
 		freeSwapPagesLock = new Lock();
@@ -83,9 +83,38 @@ public class VMKernel extends UserKernel {
 		}
 	}
 	
-	public static OpenFile swapFile;
+       public static OpenFile swapFile;
 	
-	public static LinkedList<Boolean> freeSwapPages;
+       static class indexAtFreeSwapPages {
+ 	   private int processID;
+           private boolean occupied;
+		
+	   public indexAtFreeSwapPages() {
+	   }
+	
+           public indexAtFreeSwapPages(int processID, boolean occupied) {
+              this.processID = processID;
+              this.occupied = occupied;
+	   }
+	
+	   public int getProcessID() {
+	      return processID;
+	   }
+	
+           public void setProcessID(int processID) {
+	      this.processID = processID;
+	   }
+	
+           public boolean getOccupied() {
+	      return occupied;
+	   }
+	
+           public void setOccupied(boolean occupied) {
+	     this.occupied = occupied;
+	   }
+	}
+
+        public static LinkedList<indexAtFreeSwapPages> freeSwapPages;
 	
 	public static PageTableEntryInfo[] ipt;
 	
@@ -133,7 +162,7 @@ public class VMKernel extends UserKernel {
 	}
 	
 	public static void tlbLockAcquire() {
-		System.err.println("tlbLockAcquire: " + VMKernel.tlbLock.isHeldByCurrentThread());
+	//	System.err.println("tlbLockAcquire: " + VMKernel.tlbLock.isHeldByCurrentThread());
 		if(!VMKernel.tlbLock.isHeldByCurrentThread() && !tlbLockAcquired) {
 			VMKernel.tlbLock.acquire();
 			tlbLockAcquired = true;

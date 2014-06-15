@@ -199,7 +199,7 @@ public class UserProcess {
 	 * @return the number of bytes successfully transferred.
 	 */
 	public int writeVirtualMemory(int vaddr, byte[] data) {
-		return writeVirtualMemory(vaddr, data, 0, data.length);
+               	return writeVirtualMemory(vaddr, data, 0, data.length);
 	}
 
 	/**
@@ -221,7 +221,8 @@ public class UserProcess {
 	 * @return the number of bytes successfully transferred.
 	 */
 	public int writeVirtualMemory(int vaddr, byte[] data, int offset, int length) {
-		Lib.assertTrue(offset >= 0 && length >= 0
+                
+                Lib.assertTrue(offset >= 0 && length >= 0
 				&& offset + length <= data.length);
 
 		byte[] memory = Machine.processor().getMemory();
@@ -823,7 +824,7 @@ public class UserProcess {
 	private int argc, argv;
 
 	private UserProcess parentProcess = null;
-	private int processID;
+	protected int processID;
 
 	private HashSet<Integer> childProcesses = new HashSet<Integer>();
 	private HashMap<Integer, Integer> exitStatusTable = new HashMap<Integer, Integer>();

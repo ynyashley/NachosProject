@@ -16,7 +16,6 @@ public class VMProcess extends UserProcess {
 	 */
 	public VMProcess() {
 		super();
-		swapPageIndices = new LinkedList<Integer>();
 	}
 
 	/**
@@ -27,14 +26,12 @@ public class VMProcess extends UserProcess {
 		/*
 		 * Flush TLB on context switch
 		 */
-		System.err.println("===============saveState()===============");
 		for (int i = 0; i < Machine.processor().getTLBSize(); i++) {
 			TranslationEntry entry = Machine.processor().readTLBEntry(i);
 			// sync entry with page table if entry is valid
 			if (entry.valid) {
-				System.out.println("-------syncing with pageTable--------");
 				int correctVpn = VMKernel.ipt[entry.ppn].getEntry().vpn;
-				pageTable[correctVpn] = new TranslationEntry(entry.vpn,
+				pageTable[correctVpn] = new TranslationEntry(pageTable[correctVpn].vpn,
 						entry.ppn, entry.valid, entry.readOnly, entry.used,
 						entry.dirty);
 				UserKernel.memoryLockAcquire();
@@ -45,9 +42,6 @@ public class VMProcess extends UserProcess {
 				VMKernel.iptLockRelease();
 				UserKernel.memoryLockRelease();
 			}
-			// invalidate entry
-			//entry.valid = false;
-			//Machine.processor().writeTLBEntry(i, entry);
 			Machine.processor().writeTLBEntry(i, new TranslationEntry());
 		}
 	}
@@ -67,7 +61,6 @@ public class VMProcess extends UserProcess {
 	 * @return <tt>true</tt> if successful.
 	 */
 	protected boolean loadSections() {
-		System.err.println("===========loadSections()==============");
 		pageTable = new TranslationEntry[numPages];
 
 		for (int vpn = 0; vpn < numPages; vpn++) {
@@ -76,6 +69,7 @@ public class VMProcess extends UserProcess {
 		}
 
 		// load sections
+
 		for (int s = 0; s < coff.getNumSections(); s++) {
 			CoffSection section = coff.getSection(s);
 
@@ -86,12 +80,9 @@ public class VMProcess extends UserProcess {
 				int vpn = section.getFirstVPN() + i;
 
 				pageTable[vpn].readOnly = section.isReadOnly();
-				pageTable[vpn].vpn = s;
+             			pageTable[vpn].vpn = s;
+
 			}
-		}
-		
-		for(int i = 0; i < swapPageIndices.size(); i++) {
-			 swapPageIndices.set(i, -1);
 		}
 
 		return true;
@@ -104,14 +95,13 @@ public class VMProcess extends UserProcess {
 		super.unloadSections();
 		// check if entry is dirty
 		// free up the swap space upon swapping the page into memory
-		for(TranslationEntry entry : pageTable) {
-			int index = swapPageIndices.get(entry.vpn);
-			if(entry.dirty && index != -1) {
-			    VMKernel.freeSwapPagesLockAcquire();
-				VMKernel.freeSwapPages.set(index, false);
-				VMKernel.freeSwapPagesLockRelease();
-			}
-		}
+                VMKernel.freeSwapPagesLockAcquire();
+                for( int index =0 ;index < VMKernel.freeSwapPages.size(); index++)
+                {
+                   if (	VMKernel.freeSwapPages.get(index).getProcessID()== processID())
+                      VMKernel.freeSwapPages.get(index).setOccupied(false);
+                }
+                VMKernel.freeSwapPagesLockRelease();
 	}
 
 	/**
@@ -155,8 +145,6 @@ public class VMProcess extends UserProcess {
 	}
 	
 	private TranslationEntry handlePageFault(TranslationEntry entry, int vpn) {
-		System.err.println("===========handlePageFault()==============");
-		System.out.println("TLB entry.valid at index 0: " + Machine.processor().readTLBEntry(0).valid);
 		int ppn = allocatePhysicalPage(entry);
 		entry.ppn = ppn;
 		VMKernel.pinPage(ppn);
@@ -166,11 +154,23 @@ public class VMProcess extends UserProcess {
 					.getMemory(), entry.ppn * pageSize, pageSize);
 
 		} else {
-			// entry.vpn is section number
-			System.err.println("entry.vpn: " + entry.vpn);
-			System.err.println("vpn: " + vpn);
-			CoffSection section = coff.getSection(entry.vpn);
-			section.loadPage((vpn - section.getFirstVPN()), ppn);
+                        if (entry.vpn < coff.getNumSections())
+			{ // entry.vpn is section number
+			  CoffSection section = coff.getSection(entry.vpn);
+			  section.loadPage((vpn - section.getFirstVPN()), ppn);
+                        }
+                        else
+                        {
+		          //initialize stack frame in the first time
+                           byte[] nullPage = new byte[pageSize];
+                           for (int i =0 ; i< pageSize; i++)
+                           {
+                              nullPage[i]=0;
+                           }
+                           System.arraycopy(nullPage, 0,  Machine.processor()
+					.getMemory(), entry.ppn*pageSize, pageSize);
+                           
+                        }
 		}			
 		VMKernel.unpinPage(ppn);
 		entry.valid = true;
@@ -179,11 +179,9 @@ public class VMProcess extends UserProcess {
 		UserKernel.memoryLockAcquire();
 		VMKernel.iptLockAcquire();
 		VMKernel.ipt[entry.ppn].setProcessID(processID());
-		VMKernel.iptLockRelease();
 		TranslationEntry entryForIpt = new TranslationEntry(vpn, entry.ppn, 
 				entry.valid, entry.readOnly, entry.used, entry.dirty);
 		// same reason as above
-		VMKernel.iptLockAcquire();
 		VMKernel.ipt[entry.ppn].setEntry(entryForIpt);
 		VMKernel.iptLockRelease();
 		UserKernel.memoryLockRelease();
@@ -201,12 +199,10 @@ public class VMProcess extends UserProcess {
 	 * @return the index of the newly allocated space on the TLB array.
 	 **/
 	private int allocateTLBEntry() {
-		System.err.println("===========allocateTLBEntry()==============");
 		// try to find an invalid TLB entry to evict
 		VMKernel.tlbLockAcquire();
 		for (int i = 0; i < Machine.processor().getTLBSize(); i++) {
 			if (!Machine.processor().readTLBEntry(i).valid) {
-				System.err.println("incorrect entry at: " + i);
 				VMKernel.tlbLockRelease();
 				return i;
 			}
@@ -215,20 +211,19 @@ public class VMProcess extends UserProcess {
 		// all entries are valid, randomly evict a victim
 		int victimIndex = Lib.random(Machine.processor().getTLBSize());
 		TranslationEntry victim = Machine.processor().readTLBEntry(victimIndex);
-		System.err.println("evicted TLB entry.vpn: " + victim.vpn);
 		victim.valid = false;
 		// sync invalidated victim entry back to TLB
 		VMKernel.tlbLockAcquire();
 		Machine.processor().writeTLBEntry(victimIndex, victim);
 		VMKernel.tlbLockRelease();
 		int correctVpn = VMKernel.ipt[victim.ppn].getEntry().vpn;
-		System.err.println("correctVpn: " + correctVpn);
 		// sync entry with page table
-		pageTable[correctVpn] = new TranslationEntry(victim.vpn,
+		pageTable[correctVpn] = new TranslationEntry(pageTable[victim.vpn].vpn,
 				victim.ppn, victim.valid, victim.readOnly, victim.used,
 				victim.dirty);
 		// sync victim entry with ipt, keeping vpn the one that causes the page fault
 		UserKernel.memoryLockAcquire();
+                
 		victim.vpn = correctVpn;
 		VMKernel.iptLockAcquire();
 		VMKernel.ipt[victim.ppn].setEntry(victim);
@@ -238,28 +233,26 @@ public class VMProcess extends UserProcess {
 	}
 	
 	private void updateTLBEntry(int tlbIndex, TranslationEntry entry, int vpn) {
-		System.err.println("==============updateTLBEntry()==============");
 		TranslationEntry newEntry = new TranslationEntry(vpn, entry.ppn, 
 				entry.valid, entry.readOnly, entry.used, entry.dirty);
-		System.out.println("tlbIndex: " + tlbIndex);
-		System.out.println("entry.valid: " + entry.valid);
 		VMKernel.tlbLockAcquire();
 		Machine.processor().writeTLBEntry(tlbIndex, newEntry);
 		VMKernel.tlbLockRelease();
 	}
 
 	private int allocatePhysicalPage(TranslationEntry entry) {
-		System.err.println("==============allocatePhysicalPage=================");
-		System.out.println("TLB entry.valid at index 0: " + Machine.processor().readTLBEntry(0).valid);
-		return UserKernel.freePages.isEmpty() ? clockAlgorithm() : 
-				((Integer) UserKernel.freePages.removeFirst()).intValue();
+		if (UserKernel.freePages.isEmpty() )
+                   clockAlgorithm();
+
+                UserKernel.memoryLockAcquire();
+                int tempPage = ((Integer) UserKernel.freePages.removeFirst()).intValue();
+                UserKernel.memoryLockRelease();
+
+                return tempPage;
 	}
 
-	private int clockAlgorithm() {
-		System.err.println("===========clockAlgorithm()==============");
-		System.out.println("TLB entry.valid at index 0: " + Machine.processor().readTLBEntry(0).valid);
+	private void clockAlgorithm() {
 		int clockHand = 0;
-		boolean swappedOut = false;
 		TranslationEntry victim = null;
 		while (UserKernel.freePages.isEmpty()) {
 			PageTableEntryInfo frame = VMKernel.ipt[clockHand];
@@ -273,8 +266,6 @@ public class VMProcess extends UserProcess {
 					 * simply evict otherwise. 
 					 */
 					if (victim.dirty) { 
-						System.err.println("-----------swapped out------------");
-						swappedOut = true;
 						index = assignSwapSpace();
 						// write to swap file
 						VMKernel.freeSwapPagesLockAcquire();
@@ -288,7 +279,6 @@ public class VMProcess extends UserProcess {
 					UserKernel.freePages.add(victim.ppn);
 					UserKernel.memoryLockRelease();
 					victim.valid = false; // invalidate PTE
-					System.err.println("victim.vpn: " + victim.vpn);
 					
 					// sync pageTable entry
 					pageTable[victim.vpn].valid = false;
@@ -300,41 +290,37 @@ public class VMProcess extends UserProcess {
 					VMKernel.iptLockRelease();
 					UserKernel.memoryLockRelease();
 					
-					/* reuse victim's TranslationEntry vpn field to store 
-					 * the index of which its page in swap file can be found 
-					 */
-					if(swappedOut) {
-						System.err.println("----------here, not good------------");
-						swapPageIndices.set(victim.vpn, index);
-						victim.vpn = index;
-					}
 				}
 			}
 			clockHand = (clockHand + 1) % Machine.processor().getNumPhysPages();
 		}
-		return victim.ppn;
+		return;
 	}
 
 	private int assignSwapSpace() {
-		System.err.println("===========assignSwapSpace()==============");
+                int swapIndex = 0;
 		VMKernel.freeSwapPagesLockAcquire();
 		for (int i = 0; i < VMKernel.freeSwapPages.size(); i++) {
 			// false means not in use
-			if (VMKernel.freeSwapPages.get(i) == false) {
-				VMKernel.freeSwapPages.set(i, true);
-				return i;
+			if (VMKernel.freeSwapPages.get(i).getOccupied() == false) {
+				VMKernel.freeSwapPages.get(i).setOccupied(true);
+                                VMKernel.freeSwapPages.get(i).setProcessID(processID);
+                                swapIndex = i;
+				return swapIndex;
 			}
 		}
-		VMKernel.freeSwapPages.add(new Boolean(true));
+                
+		VMKernel.freeSwapPages.add(new VMKernel.indexAtFreeSwapPages(processID, true));
+                int SwapIndex = VMKernel.freeSwapPages.size() - 1;
 		VMKernel.freeSwapPagesLockRelease();
-		return (VMKernel.freeSwapPages.size() - 1);
+		return swapIndex;
 	}
-	
-	private LinkedList<Integer> swapPageIndices;
 
 	private static final int pageSize = Processor.pageSize;
 
 	private static final char dbgProcess = 'a';
 
 	private static final char dbgVM = 'v';
+
+
 }
